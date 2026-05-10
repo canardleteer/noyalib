@@ -1,0 +1,161 @@
+# REUSE 3.3 annotations: blanket licensing for files that don't
+# carry an inline SPDX header (config, fixtures, third-party test
+# corpora, generated artefacts). Source code files (.rs) keep their
+# inline SPDX headers — this file only fills in the gaps.
+#
+# Documented at https://reuse.software/spec-3.3/
+
+version = 1
+
+# ── Project meta / config files ───────────────────────────────────
+[[annotations]]
+path = [
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
+    ".rustfmt.toml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "Makefile",
+    "about.toml",
+    "about.hbs",
+    "deny.toml",
+    "rust-toolchain.toml",
+    "REUSE.toml",
+    "supply-chain/audits.toml",
+    "supply-chain/config.toml",
+    "supply-chain/imports.lock",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── CI workflows ──────────────────────────────────────────────────
+[[annotations]]
+path = ".github/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Documentation ─────────────────────────────────────────────────
+[[annotations]]
+path = [
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "GETTING_STARTED.md",
+    "GLOSSARY.md",
+    "PLAN.md",
+    "SECURITY.md",
+    "doc/**",
+    "crates/noya-cli/README.md",
+    "crates/noya-cli/examples/README.md",
+    "crates/noyalib/README.md",
+    "crates/noyalib/tests/README.md",
+    "crates/noyalib-lsp/README.md",
+    "crates/noyalib-lsp/examples/README.md",
+    "crates/noyalib-mcp/README.md",
+    "crates/noyalib-mcp/examples/README.md",
+    "crates/noyalib-wasm/README.md",
+    "crates/noyalib-wasm/examples/README.md",
+    "crates/noyalib-wasm/examples/browser/index.html",
+    "crates/noyalib/doc/**",
+    "crates/noya-cli/doc/**",
+    "crates/noyalib-lsp/doc/**",
+    "crates/noyalib-mcp/doc/**",
+    "crates/noyalib-wasm/doc/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Examples (per-crate `examples/` directories) ─────────────────
+# Editor configs, MCP host configs, ecosystem schema-gate scripts,
+# and WASM JS / browser demos under each `crates/<name>/examples/`
+# tree. Most are JSON / TOML / shell / Lua / Emacs Lisp / JS files
+# where the inline SPDX comment is awkward (or, for JSON,
+# impossible — JSON has no comment syntax) — so REUSE 3.3
+# annotations cover them in aggregate.
+[[annotations]]
+path = "crates/*/examples/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Test fixtures (in-repo) ───────────────────────────────────────
+[[annotations]]
+path = [
+    "crates/noyalib/benches/fixtures/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Third-party YAML test corpus ──────────────────────────────────
+# The YAML 1.2 official test suite is maintained at
+# https://github.com/yaml/yaml-test-suite under MIT. We vendor the
+# fixture files here for offline / hermetic CI.
+[[annotations]]
+path = "crates/noyalib/tests/yaml-test-suite/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "yaml-test-suite contributors"
+SPDX-License-Identifier = "MIT"
+
+# ── Generated CLI artefacts ───────────────────────────────────────
+# `complete/*` and `doc/*.1` are regenerated from the clap Command
+# tree by `cargo xtask {completions,manpages}` (and from the
+# build script when NOYA_GEN_ASSETS=1). Files are tracked because
+# distro packagers prefer pre-built artefacts; they remain
+# bit-reproducible from source.
+[[annotations]]
+path = [
+    "complete/**",
+    "doc/noyafmt.1",
+    "doc/noyavalidate.1",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Distro packaging templates (pkg/) ─────────────────────────────
+# Hand-written per-channel packaging metadata consumed by
+# `.github/workflows/release-binaries.yml` (Phase 4 of PLAN.md).
+# Files in this tree are templates — `__VERSION__` / `__SHA256__`
+# placeholders rewritten per release — or inert config files
+# without inline SPDX headers.
+[[annotations]]
+path = "pkg/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Fuzz corpora ──────────────────────────────────────────────────
+[[annotations]]
+path = [
+    "fuzz/.gitignore",
+    "fuzz/Cargo.toml",
+    "fuzz/Cargo.lock",
+    "fuzz/corpus/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# ── Sub-workspaces (WASM / MCP / examples) ────────────────────────
+[[annotations]]
+path = [
+    ".cargo/config.toml",
+    "crates/noya-cli/Cargo.toml",
+    "crates/noyalib/Cargo.toml",
+    "crates/noyalib-wasm/Cargo.toml",
+    "crates/noyalib-wasm/index.html",
+    "crates/noyalib-mcp/Cargo.toml",
+    "crates/noyalib-lsp/Cargo.toml",
+    "crates/xtask/Cargo.toml",
+    "crates/noyalib/examples/wasm/.gitignore",
+    "crates/noyalib/examples/wasm/Cargo.toml",
+    "crates/noyalib/examples/wasm/index.html",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Noyalib"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

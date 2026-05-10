@@ -1,0 +1,265 @@
+//! Multi-document YAML loading.
+//!
+//! This module provides functionality for parsing YAML documents that contain
+//! multiple documents separated by `---`.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use noyalib::document::load_all;
+//!
+//! let yaml = "---
+//! name: doc1
+//! ---
+//! name: doc2
+//! ";
+//!
+//! let docs: Vec<_> = load_all(yaml).unwrap().collect();
+//! assert_eq!(docs.len(), 2);
+//! ```
+
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 Noyalib. All rights reserved.
+
+use crate::de::ParserConfig;
+use crate::error::Result;
+use crate::parser;
+use crate::prelude::*;
+#[cfg(feature = "std")]
+use crate::span_context::{self, SpanTree};
+use crate::value::Value;
+#[cfg(not(feature = "std"))]
+use alloc::vec::IntoIter;
+#[cfg(feature = "std")]
+use std::vec::IntoIter;
+
+/// An iterator over YAML documents in a string.
+///
+/// Created by the [`load_all`] function.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::document::load_all;
+/// let iter = load_all("---\na: 1\n---\nb: 2\n").unwrap();
+/// assert_eq!(iter.len(), 2);
+/// ```
+#[derive(Debug)]
+pub struct DocumentIterator {
+    docs: IntoIter<Value>,
+    #[cfg(feature = "std")]
+    _span_trees: Vec<SpanTree>,
+    total: usize,
+}
+
+impl DocumentIterator {
+    /// Returns the total number of documents parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::document::load_all;
+    /// let iter = load_all("a: 1\n").unwrap();
+    /// assert_eq!(iter.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.total
+    }
+
+    /// Returns true if there are no documents.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noyalib::document::load_all;
+    /// let iter = load_all("a: 1\n").unwrap();
+    /// assert!(!iter.is_empty());
+    /// ```
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.total == 0
+    }
+}
+
+impl Iterator for DocumentIterator {
+    type Item = Result<Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.docs.next().map(Ok)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.docs.size_hint()
+    }
+}
+
+impl ExactSizeIterator for DocumentIterator {}
+
+/// Load all YAML documents from a string.
+///
+/// This function parses a YAML string that may contain multiple documents
+/// separated by `---` markers. Default security limits are applied.
+///
+/// # Examples
+///
+/// ```rust
+/// use noyalib::document::load_all;
+///
+/// let yaml = "---
+/// first: 1
+/// ---
+/// second: 2
+/// ";
+///
+/// let docs: Vec<_> = load_all(yaml).unwrap().filter_map(Result::ok).collect();
+/// assert_eq!(docs.len(), 2);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the YAML syntax is invalid.
+pub fn load_all(input: &str) -> Result<DocumentIterator> {
+    load_all_with_config(input, &ParserConfig::default())
+}
+
+/// Load all YAML documents from a string with custom security limits.
+///
+/// # Errors
+///
+/// Returns an error if the YAML syntax is invalid or the document
+/// exceeds the configured limits.
+///
+/// # Examples
+///
+/// ```
+/// use noyalib::{document::load_all_with_config, ParserConfig};
+/// let cfg = ParserConfig::new();
+/// let iter = load_all_with_config("a: 1\n---\nb: 2\n", &cfg).unwrap();
+/// assert_eq!(iter.len(), 2);
+/// ```
+pub fn load_all_with_config(input: &str, config: &ParserConfig) -> Result<DocumentIterator> {
+    if input.len() > config.max_document_length {
+        return Err(crate::error::Error::Parse(format!(
+            "document exceeds maximum length of {} bytes",
+            config.max_document_length
+        )));
+    }
+    let parse_config = parser::ParseConfig::from(config);
+
+    #[cfg(feature = "std")]
+    {
+        let pairs = parser::parse(input, &parse_config)?;
+        let (docs, span_trees): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        let total = docs.len();
+        Ok(DocumentIterator {
+            docs: docs.into_iter(),
+            _span_trees: span_trees,
+            total,
+        })
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        let docs = parser::parse_all_values(input, &parse_config)?;
+        let total = docs.len();
+        Ok(DocumentIterator {
+            docs: docs.into_iter(),
+            total,
+        })
+    }
+}
+
+/// Load all YAML documents from a string, returning an error if parsing fails.
+///
+/// This is an alias for [`load_all`] which also returns errors on invalid
+/// syntax.
+///
+/// # Examples
+///
+/// ```rust
+/// use noyalib::document::try_load_all;
+///
+/// let yaml = "---
+/// first: 1
+/// ---
+/// second: 2
+/// ";
+///
+/// let iter = try_load_all(yaml).unwrap();
+/// assert_eq!(iter.len(), 2);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the YAML syntax is invalid.
+pub fn try_load_all(input: &str) -> Result<DocumentIterator> {
+    load_all(input)
+}
+
+/// Load all YAML documents and deserialize them into a typed vector.
+///
+/// # Examples
+///
+/// ```rust
+/// use noyalib::document::load_all_as;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize, PartialEq)]
+/// struct Doc {
+///     name: String,
+/// }
+///
+/// let yaml = "---
+/// name: first
+/// ---
+/// name: second
+/// ";
+///
+/// let docs: Vec<Doc> = load_all_as(yaml).unwrap();
+/// assert_eq!(docs.len(), 2);
+/// assert_eq!(docs[0].name, "first");
+/// assert_eq!(docs[1].name, "second");
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if parsing fails or if any document cannot be
+/// deserialized into the target type.
+pub fn load_all_as<T>(input: &str) -> Result<Vec<T>>
+where
+    T: for<'de> serde::Deserialize<'de> + 'static,
+{
+    let parse_config = parser::ParseConfig::from(&ParserConfig::default());
+
+    #[cfg(feature = "std")]
+    {
+        let pairs = parser::parse(input, &parse_config)?;
+        let mut results = Vec::with_capacity(pairs.len());
+        let source: Arc<str> = input.into();
+
+        for (value, span_tree) in &pairs {
+            let spans = span_context::build_span_map(value, span_tree);
+            let ctx = span_context::SpanContext {
+                spans,
+                source: source.clone(),
+            };
+            let _guard = span_context::set_span_context(ctx);
+            let typed: T = crate::from_value(value)?;
+            results.push(typed);
+        }
+
+        Ok(results)
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        let docs = parser::parse_all_values(input, &parse_config)?;
+        let mut results = Vec::with_capacity(docs.len());
+        for value in &docs {
+            let typed: T = crate::from_value(value)?;
+            results.push(typed);
+        }
+        Ok(results)
+    }
+}

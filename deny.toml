@@ -1,0 +1,56 @@
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "workspace"
+yanked = "warn"
+# Bench-only competitor surface — these crates are never compiled
+# into a release artefact. They appear in `crates/noyalib/Cargo.toml`
+# under `[dev-dependencies]` purely so the comparison harness in
+# `crates/noyalib/benches/comparison.rs` can produce honest
+# head-to-head numbers vs every popular Rust YAML library, including
+# the ones flagged unsound or unmaintained by RustSec. The point of
+# the comparison is showing noyalib's safety+speed posture against
+# the alternatives — silencing the advisories on dev-deps lets the
+# audit pipeline reflect that intent without weakening the
+# advisory enforcement on production deps.
+ignore = [
+    # serde_yml: RUSTSEC-2025-0068 (unsound + unmaintained, see also
+    # advisory-db#2395). Bench-only via dev-dep; the maintainer's
+    # prior crate, kept so `cargo bench --bench comparison` covers
+    # the full ecosystem.
+    "RUSTSEC-2025-0068",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    # `is_ci` (used by miette/fancy via supports-color) is ISC-licensed.
+    # ISC is permissive, OSI- and FSF-approved, and widely accepted.
+    "ISC",
+    # `memchr` is dual-licensed Unlicense OR MIT — transitive via memmap2.
+    "Unlicense",
+    # A handful of transitive deps ship under BSD clauses (2 or 3).
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # `adler2` and a few compression helpers are 0BSD.
+    "0BSD",
+    # `borrow-or-share` (transitive via jsonschema → referencing →
+    # fluent-uri) is MIT-0 — OSI-approved permissive, no attribution
+    # requirement.
+    "MIT-0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

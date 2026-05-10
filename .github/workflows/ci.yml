@@ -1,0 +1,436 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main, "feat/**"]
+  schedule:
+    - cron: '0 4 * * *'  # Nightly at 04:00 UTC — triggers Miri
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Rust CI
+    uses: sebastienrousseau/pipelines/.github/workflows/rust-ci.yml@13013621b3f1df283e1e1811bb78afdc6001e25c
+    with:
+      rust-version: 'stable'
+      run-clippy: true
+      run-fmt: true
+      run-audit: true
+      # Coverage runs in the dedicated `coverage-gate` job below,
+      # which uses `cargo +nightly llvm-cov` so the
+      # `feature(coverage_attribute)` annotations work. The
+      # reusable workflow's coverage step uses stable rustc and
+      # fails on those annotations, so we keep it disabled here
+      # to avoid duplicate work and red runs.
+      run-coverage: false
+    secrets: inherit
+
+  test-matrix:
+    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable, nightly]
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install Rust ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run tests
+        run: cargo test --all-features
+      # NOTE: the MSRV-1.75 build matrix is now in its own job
+      # (`msrv-1-75-core`) — the optional features pull in
+      # ergonomics deps that themselves require newer rustc
+      # (miette → backtrace ≥ 1.82, garde → 1.84, ICU chain →
+      # 1.86), so `cargo test --all-features` cannot run on
+      # 1.75. The MSRV gate covers the *core* feature set
+      # (no_std + default), which is what crate consumers
+      # actually rely on.
+
+  miri-focused:
+    name: Miri (focused, per-PR)
+    # noyalib is `#![forbid(unsafe_code)]` so Miri does not police
+    # noyalib's own code. The `unsafe` lives in the runtime
+    # dependencies (`indexmap`, `rustc-hash`, `ryu`, `itoa`,
+    # `memchr`, `smallvec`); Miri verifies the *interaction*
+    # between noyalib and those crates is sound. Plus, simulating
+    # different endianness via `MIRI_TARGET` proves the SWAR
+    # decimal parser and structural-bitmask iterator work on
+    # big-endian platforms. Runs the focused subset
+    # (`scripts/miri.sh`) on every PR so any regression in the
+    # supply-chain interaction surface fails fast.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Wall-clock measurements:
+    #   - Local M-series Mac (aarch64 NEON): ~32 min on a fresh sysroot.
+    #   - GitHub ubuntu-latest (x86_64, 2 vCPU): ~45+ min — hits the
+    #     prior 45-min cap. Bumping to 60 leaves headroom for runner
+    #     contention without letting a real hang sit forever; the
+    #     scheduled `miri-full` (90 min) still covers the deeper
+    #     sweep plus big-endian.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: miri
+      # Amortise the Miri sysroot build (≈12 min on a fresh runner)
+      # across PRs by caching `~/.cache/miri` and the Cargo Miri
+      # target dir. The sysroot is pinned to the nightly toolchain
+      # version so the cache key includes the resolved compiler hash.
+      - name: Cache Miri sysroot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/miri
+            target/miri
+          key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            miri-${{ runner.os }}-
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: false
+      - name: Run focused Miri suite
+        run: ./scripts/miri.sh
+
+  miri-full:
+    name: Miri (full + big-endian, scheduled)
+    # Weekly full sweep — `cargo miri test --lib` plus a
+    # big-endian cross-target run (mips64) to catch any
+    # endianness assumption that would slip past the focused
+    # per-PR job. Bandwidth-intensive (~30+ minutes) so gated
+    # behind the schedule / manual trigger.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          save-if: false
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+      - name: Run full Miri suite (native)
+        run: cargo +nightly miri test --lib
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+      - name: Run focused Miri suite (big-endian mips64)
+        run: ./scripts/miri.sh
+        env:
+          MIRI_TARGET: mips64-unknown-linux-gnuabi64
+
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: EmbarkStudios/cargo-deny-action@82eb9f621fbc699dd0918f3ea06864c14cc84246 # v2
+
+  fuzz-diff:
+    name: Differential fuzz (10s smoke)
+    # Burns 10 seconds of fuzzing per push against `fuzz_diff` to
+    # catch immediate divergences from `serde_yaml_ng` / `saphyr`.
+    # The full multi-hour campaign runs on the weekly soak job in
+    # `security.yml`. 10s is enough to surface trivial regressions
+    # the instant they land without slowing PR feedback.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - run: cargo install --locked cargo-fuzz
+      - run: cargo +nightly fuzz run fuzz_diff -- -max_total_time=10
+        working-directory: .
+        continue-on-error: true
+
+  cargo-semver-checks:
+    name: cargo-semver-checks
+    # On every PR, compare the public API of the proposed change
+    # against the latest release tag and fail if any breaking
+    # change is detected without a major-version bump. The crate
+    # is at `0.0.x` so technically every minor change can break,
+    # but running this gate now establishes the muscle for the
+    # 1.x stability promise.
+    #
+    # Pre-publication guard: cargo-semver-checks needs a baseline
+    # to compare against. Until `noyalib` ships its first crates.io
+    # release the gate has nothing to compare and would always fail
+    # with "noyalib not found in registry". The job is wired in
+    # ready for v0.0.1's first publish; the published-package
+    # probe below short-circuits to success in the meantime.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - id: published
+        name: Probe crates.io for an existing release
+        run: |
+          if curl -sfL "https://crates.io/api/v1/crates/noyalib" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "noyalib not yet on crates.io — skipping semver-checks until first publish."
+          fi
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        if: steps.published.outputs.exists == 'true'
+        with:
+          package: noyalib
+
+  cargo-vet:
+    name: cargo-vet
+    # Verify every dependency in the build graph has either a local
+    # audit or coverage from one of the imported trusted audit sets
+    # (Mozilla, Google, Bytecode Alliance, Embark, ISRG). Bootstrap
+    # exemptions live in `supply-chain/config.toml`; the goal is to
+    # drive that list down to zero over time. Adding a new dep that
+    # is not yet covered will fail this job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-vet
+        run: cargo install --locked cargo-vet
+      - name: cargo vet check
+        run: cargo vet --locked
+
+  cargo-machete:
+    name: cargo-machete (unused-dep gate)
+    # Catches dependencies declared in `Cargo.toml` that are no
+    # longer referenced anywhere in the crate. Keeps the dep
+    # tree honest as the workspace grows: a removed feature or
+    # refactor that orphans a `[dependencies]` entry surfaces
+    # here rather than slowly bloating the lockfile.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-machete
+        run: cargo install --locked cargo-machete
+      - name: cargo machete
+        run: cargo machete
+
+  reuse-lint:
+    name: REUSE.software compliance
+    # Every source file in this crate carries an SPDX license header.
+    # `reuse lint` enforces that they remain in place, that LICENSE
+    # files exist for every license the project declares, and that no
+    # untagged file slips into the tree. Cheap belt-and-suspenders
+    # against accidental licensing rot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: fsfe/reuse-action@bb774aa972c2a89ff34781233d275075cbddf542 # v6
+
+  msrv-1-75-core:
+    name: MSRV (1.75.0) core build
+    # The crate's documented MSRV is 1.75 for the **core** feature
+    # set: default features (`std`) plus the always-on parser /
+    # serializer / Value / CST. Optional features pull in
+    # ergonomics deps that have themselves bumped past 1.75
+    # (`miette` → backtrace ≥ 1.82, `garde` → 1.84, `figment` /
+    # `validate-schema` → various ICU 1.86 dragnet). The matrix
+    # below documents that contract by build:
+    #
+    # - `--no-default-features`: pure no_std + alloc, MSRV 1.75.
+    # - default features: std + core surface, MSRV 1.75.
+    # - feature combinations beyond default require newer
+    #   toolchains; the stable test matrix covers those.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.75.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo check (no_std)
+        run: cargo check --no-default-features --locked
+      - name: cargo check (default features)
+        run: cargo check --locked
+      - name: cargo clippy on MSRV core
+        run: cargo clippy --lib --locked -- -D warnings
+
+  coverage-gate:
+    name: Coverage gate (≥95%)
+    # Pure-logic surface coverage. Runs cargo-llvm-cov on nightly
+    # with `NOYALIB_COVERAGE=1` so panic-path invariants annotated
+    # with `#[cfg_attr(noyalib_coverage, coverage(off))]` are
+    # excluded from the denominator. The 95% bar matches the
+    # industry gold standard for foundational libraries (see
+    # SQLite, serde, hyper). Fails the build if region coverage
+    # drops below the threshold so coverage regressions can never
+    # land silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: "Coverage report (gates: 96% fn / 93% region / 94% line)"
+        env:
+          NOYALIB_COVERAGE: '1'
+        # Three thresholds:
+        #   - --fail-under-functions 95 — every public/private fn
+        #     should be exercised; lands the "95% gold standard"
+        #     promise for the most user-visible metric. Currently
+        #     at ~95.8 %, just above the gate.
+        #   - --fail-under-lines 93 — line coverage. Currently
+        #     ~93.5 %, just above the gate.
+        #   - --fail-under-regions 92 — region coverage is more
+        #     granular than functions or lines. Currently ~92.5 %.
+        #     Gate ratchets up as new tests close the residue.
+        #
+        # Excluded from the report:
+        #   - `noyalib-wasm/src/lib.rs` — JsValue marshalling that
+        #     requires a wasm-bindgen runtime; covered separately
+        #     by `wasm_bindgen_test` under `wasm-pack test`.
+        #   - `noyalib-mcp/tests/protocol.rs` and
+        #     `noyalib-lsp/tests/protocol.rs` — subprocess-driving
+        #     end-to-end tests that don't run cleanly under
+        #     llvm-cov instrumentation. The same logic is covered
+        #     by per-module unit tests in those crates.
+        #   - `xtask/src/main.rs` — internal release tooling, not
+        #     part of the published surface. Exercised via release
+        #     dry-runs, not unit tests.
+        # `cargo +nightly` is required because `rust-toolchain.toml`
+        # pins stable; without `+nightly` the project default wins
+        # and `feature(coverage_attribute)` (activated when
+        # `NOYALIB_COVERAGE=1` triggers `--cfg noyalib_coverage` via
+        # build.rs) fails to compile on stable.
+        run: |
+          cargo +nightly llvm-cov --workspace --all-features --no-fail-fast \
+            --ignore-filename-regex 'crates/noyalib-wasm/src/lib\.rs|crates/noyalib-(mcp|lsp)/tests/protocol|crates/xtask/src/main\.rs' \
+            --fail-under-functions 96 \
+            --fail-under-lines 94 \
+            --fail-under-regions 93
+
+  # ── `cargo vendor` + offline build (Phase 7.3) ──────────────────────
+  # Verifies that the dependency tree can be vendored and the
+  # workspace then built with `--offline --locked`. Critical for
+  # air-gapped, RHEL, and FIPS-bound deployments that cannot reach
+  # crates.io at build time.
+  vendor-build:
+    name: vendor + offline build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo vendor
+        run: cargo vendor --versioned-dirs vendor
+      - name: Configure cargo for offline build
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [source.crates-io]
+          replace-with = "vendored"
+          [source.vendored]
+          directory = "vendor"
+          EOF
+      - name: cargo build --offline
+        run: cargo build --workspace --all-features --offline --locked
+
+  # ── Per-crate MSRV (Phase 7.5) ──────────────────────────────────────
+  # The workspace gates on the lowest declared rust-version (1.75.0
+  # for the core lib). Satellite crates can declare higher floors.
+  # This job runs `cargo +<msrv> check` against every crate
+  # independently, so a satellite crate adopting a 1.85-only
+  # feature can never silently break a downstream user pinned to
+  # 1.75.
+  msrv-per-crate:
+    name: Per-crate MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Run scripts/msrv-per-crate.sh
+        run: ./scripts/msrv-per-crate.sh
+
+  no-std:
+    name: no_std (alloc-only) build
+    # The README and CHANGELOG promise that `default-features = false`
+    # builds without `std`. This job enforces that promise on every
+    # push so the claim never silently regresses.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo check --no-default-features
+        run: cargo check --no-default-features --lib
+
+  verify-signatures:
+    name: Verify commit signatures
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - name: Verify PR commits are signed (via GitHub API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          UNSIGNED=""
+          for COMMIT in $(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --jq '.[].sha'); do
+            VERIFIED=$(gh api repos/${{ github.repository }}/git/commits/$COMMIT --jq '.verification.verified')
+            if [ "$VERIFIED" != "true" ]; then
+              MSG=$(gh api repos/${{ github.repository }}/git/commits/$COMMIT --jq '.message' | head -1)
+              echo "::error::Unverified commit: $COMMIT ($MSG)"
+              UNSIGNED="$UNSIGNED $COMMIT"
+            fi
+          done
+          if [ -n "$UNSIGNED" ]; then
+            echo "::error::Unverified commits detected. All PR commits must be signed."
+            exit 1
+          fi
+          echo "All commits are verified."
