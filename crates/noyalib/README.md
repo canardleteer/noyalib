@@ -17,7 +17,7 @@
   <a href="https://crates.io/crates/noyalib"><img src="https://img.shields.io/crates/v/noyalib.svg?style=for-the-badge&color=fc8d62&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/noyalib"><img src="https://img.shields.io/badge/docs.rs-noyalib-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
   <a href="https://lib.rs/crates/noyalib"><img src="https://img.shields.io/badge/lib.rs-noyalib-orange.svg?style=for-the-badge" alt="lib.rs" /></a>
-  <a href="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib"><img src="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib/badge" alt="OpenSSF Scorecard" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/noyalib?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
 </p>
 
 ---
@@ -44,14 +44,14 @@
 
 ```toml
 [dependencies]
-noyalib = "0.0.3"
+noyalib = "0.0.6"
 ```
 
 `no_std` (alloc-only) builds:
 
 ```toml
 [dependencies]
-noyalib = { version = "0.0.3", default-features = false }
+noyalib = { version = "0.0.6", default-features = false }
 ```
 
 Core data binding (`from_str`, `to_string`, `Value`, schemas) and
@@ -206,6 +206,9 @@ the application needs.
 | `validator` | `validator` 0.19 | `ValidatedValidator<T>` wrapper |
 | `robotics` | — | `Degrees` / `Radians` / `StrictFloat` newtypes |
 | `parallel` | `rayon` 1.10 | `noyalib::parallel::parse<T>` |
+| `recovery` | — | `noyalib::recovery::parse_lenient` — best-effort parsing for LSP / IDE half-typed documents |
+| `sval` | `sval` 2 | `impl sval::Value` for `Value` / `Number` / `Mapping` / `MappingAny` / `TaggedValue`, `noyalib::sval_adapter::to_sval_writer` |
+| `tokio` | `tokio`, `tokio-util`, `bytes` | `noyalib::tokio_async::from_async_reader` / `from_async_reader_multi` and `YamlDecoder` codec for `tokio_util::codec::Framed` |
 | `simd` | — | `noyalib::simd::*` primitives + parser hot path |
 | `nightly-simd` | `simd` (nightly) | `core::simd`-backed 32-byte structural-bitmask scanner |
 | `compat-serde-yaml` | — | `noyalib::compat::serde_yaml` shim for migration |
@@ -292,6 +295,9 @@ cargo run --example schema_validation --features validate-schema
 cargo run --example figment      --features figment
 cargo run --example validation_garde --features garde
 cargo run --example robotics_polymorphism --features robotics
+cargo run --example recovery_lenient --features recovery
+cargo run --example sval_streaming   --features sval
+cargo run --example tokio_async_reader --features tokio
 ```
 
 Categories (full list in

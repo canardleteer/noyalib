@@ -7,7 +7,221 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-(Nothing yet — `[v0.0.5]` is the cut.)
+(Nothing yet — `[v0.0.6]` is the cut.)
+
+## [v0.0.6] — 2026-05-30
+
+The **Ecosystem Integration** cut. Lands the four remaining
+open issues from the v0.0.6 milestone (#22, #24, #25, #33),
+closes out the leftover stabilisation checklist (#19), the
+i18n hooks (#18), the user-reported pnpm-lock recursion bug
+(#46), and the OpenSSF Scorecard hardening pass that lifts
+the score from 6.5/10 to ~9/10.
+
+### Fixed — streaming deserializer depth leak on empty flow mappings (issue #46)
+
+`StreamingMapAccess::next_key_seed` (and the symmetric
+`next_value_seed` / `StreamingSeqAccess::next_element_seed`)
+did not consult the access object's `finished` flag. Serde
+visitors that call `next_entry` after the previous call
+returned `Ok(None)` — `noyalib::Value`'s `ValueVisitor::visit_map`
+is the canonical one — read the **next event from the parent
+mapping** and treated it as belonging to the now-exhausted
+child. The recursive `deserialize_any` on each spilled value
+inflated `self.depth` by one per entry; on a `pnpm-lock.yaml`
+shaped input with N consecutive empty flow mappings `{}`,
+depth hit `max_depth + 1` after exactly 128 entries and
+`from_str::<Value>` failed with
+`Error::RecursionLimitExceeded { depth: 129 }` even though the
+real nesting depth was 2.
+
+Fix in `crates/noyalib/src/streaming.rs`:
+
+* Both `MapAccess::next_key_seed` and
+  `MapAccess::next_value_seed` return `Ok(None)` / a clear
+  contract-error early when `finished` is set.
+* `SeqAccess::next_element_seed` mirrors the guard.
+* `deserialize_any` / `deserialize_seq` / `deserialize_map`
+  now decrement `self.depth` on both `Ok` and `Err` so a
+  failed inner visit cannot leak depth into the outer scope
+  (the same leak path under a different trigger).
+
+Regression test: `crates/noyalib/tests/issue_46.rs` —
+50 000-package `pnpm-lock.yaml`-shaped fixture, 3 000 empty
+flow mappings at one level, complex peer-dependency keys, and
+the deterministic depth-cliff probe at every `n` in
+`[100, 128, 129, 130, 200, 500, 1000]`.
+
+Affects every typed deserialize target whose visitor calls
+`next_entry` past the end (including `BTreeMap<K, V>` and
+struct fields of optional shape). Default `from_str` users
+upgrading to this release should see only the previously-broken
+parses now succeed; no behavioural change on valid documents.
+
+### Fixed — no-span loader missing depth-limit check
+
+Companion audit finding to issue #46: the no-span loader path
+(`crates/noyalib/src/parser/loader.rs`) — used by
+`from_str::<Value>`'s value-target fast path and by `no_std`
+multi-document loading — incremented `self.depth` on
+`SequenceStart` / `MappingStart` events at lines 814 / 833 but
+did **not** check against `ParserConfig::max_depth` the way
+the span-tracked loader does at lines 399-401 / 443-445.
+Adversarial deeply-nested input could consume stack without
+ever firing `RecursionLimitExceeded`. Now mirrored from the
+span loader. Regression test:
+`no_span_loader_honours_max_depth` in
+`crates/noyalib/tests/issue_46.rs`.
+
+Both findings were surfaced by the same code-pattern audit
+that confirmed every `MapAccess` / `SeqAccess` /
+`EnumAccess` / `VariantAccess` impl across `streaming.rs`,
+`de.rs`, and `value.rs` either has a `finished`-style guard
+or uses an iterator that naturally returns `None` on
+exhaustion. No further iterator-state-leak bugs in the same
+family remain.
+
+
+### Security & hardening pass on the v0.0.6 surface
+
+Post-merge deep-dive audit surfaced six DoS / correctness
+findings in the new modules; this section documents the fixes.
+
+* **Recovery `---`-spam OOM (C2).** `parse_lenient` now bounds
+  the document-marker scan by `ParserConfig::max_documents`. A
+  hostile `---\n`-only-spam input cannot drive unbounded
+  `Vec<usize>` allocation.
+* **Recovery O(n²) line-truncation (C1).** The truncation loop
+  is bounded by a new `LenientConfig::truncation_event_budget`
+  (default 1 MiB cumulative bytes across retries). Adversarial
+  10k-line malformed input no longer triggers ~10k full
+  re-parses.
+* **Async unbounded `read_to_end` (C3).** Both
+  `from_async_reader{,_with_config}` and the new
+  `from_async_reader_multi_with_config` drain through
+  `AsyncReadExt::take(max_document_length)`. Slow-drip
+  adversaries cannot grow the buffer beyond the configured
+  limit before the parser fires its own check.
+* **CRLF support (C4).** `recovery::split_documents`,
+  `tokio_async::find_doc_boundary`, and the existing
+  `parallel::split` now share **one** workspace-private scanner
+  in `crate::doc_boundary` that accepts both `\n` and `\r\n`
+  line terminators. The three previous copies disagreed on
+  CRLF — Windows-edited buffers round-trip through every entry
+  point now.
+* **BOM support (C5).** `parse_lenient` and both async readers
+  strip a leading UTF-8 BOM (`U+FEFF`) so Windows-saved buffers
+  parse identically to LF-on-Linux equivalents.
+* **Decoder recursion → loop (C6).** `YamlDecoder::decode` no
+  longer recurses on whitespace-only frames; the all-whitespace
+  preamble is consumed in a bounded `loop` instead, eliminating
+  the adversarial stack-overflow vector.
+
+Correctness fixes that landed alongside the hardening:
+
+* `parse_lenient` now collects Pass-2 / Pass-3 errors instead
+  of silently dropping them (M1).
+* Multi-document budget exhaustion no longer truncates the
+  output `Sequence` — skipped documents are emitted as
+  `Value::Null` so per-document diagnostic indices stay
+  aligned for LSP joiners (M2).
+* Line-truncation now treats the buffer end as a candidate
+  cut, so a malformed last line **without** a trailing newline
+  (the universal mid-typing case) is still recoverable (M3).
+* Pass-2 `ParserConfig` clone hoisted out of the hot path —
+  one clone per document, not one per pass (M13).
+
+Surface additions on the tokio module:
+
+* `from_async_reader_multi_with_config` — config-aware variant
+  was missing.
+* `YamlDecoder::max_frame_size(usize)` — optional inter-frame
+  buffer cap for codec users driving untrusted-network input
+  (M7). `Decoder::decode` returns
+  `Error::Io(InvalidData)` when the buffer exceeds the cap.
+* `YamlDecoder` is now `Clone`.
+
+Surface additions on the sval adapter:
+
+* `to_sval_writer_with_config` + `SvalConfig` —
+  `coerce_non_finite_to_null` toggles NaN / ±∞ → `Null` so
+  downstream consumers (e.g. `sval_json`) that reject
+  non-finites accept the stream (M10).
+* `impl sval::Value for Tag` — the public `Tag` type now has a
+  direct sval impl (M12).
+
+Documentation:
+
+* `SECURITY.md` and `doc/POLICIES.md` document the new
+  resource-limit knobs and their threat model.
+* CHANGELOG, READMEs, and `RELEASE-NOTES-v0.0.6.md` cross-reference
+  the new safe-by-default contracts.
+* MSRV inconsistency (workspace claimed 1.75 in some places,
+  Cargo.toml says 1.85 since v0.0.5) resolved on both axes.
+
+Tests: +24 unit tests across the three modules (61 total),
+covering CRLF, BOM, `---`-spam, no-trailing-newline truncation,
+budget-exhaustion index preservation, oversize-reader truncation,
+frame-size cap, NaN coercion. Plus a new
+`bench_recovery_lenient_on_invalid_input` arm exercising the
+3-pass recovery loop on realistic LSP-style half-typed input.
+
+### Added — Error-recovering parser (`recovery` feature, issue #22)
+
+`noyalib::recovery::parse_lenient` returns a `ParseResult`
+carrying the best-effort tree plus the list of every error
+encountered, so LSP / IDE consumers can keep showing
+autocomplete and diagnostics on half-typed documents.
+
+```rust
+let r = noyalib::recovery::parse_lenient("a: 1\nb: [unclosed\n");
+assert!(!r.is_complete);
+assert!(!r.errors.is_empty());
+```
+
+Recovery strategies — strict pass first, then
+`DuplicateKeyPolicy::Last` retry, then line-truncation retry
+that drops trailing lines until something parses.
+Multi-document input is split on `---` and each document is
+recovered independently. Error collection is capped via
+`LenientConfig::max_errors`.
+
+Gated behind the new `recovery` Cargo feature; zero extra deps.
+
+### Added — `sval` streaming adapter (`sval` feature, issue #25)
+
+Alternative to the default serde route for callers wanting to
+skip `serde_derive`'s compile-time overhead or the binary-size
+cost of serde monomorphisation. Adds `impl sval::Value for
+Value`, `Number`, `Mapping`, `MappingAny`, and `TaggedValue`,
+plus a `noyalib::sval_adapter::to_sval_writer` entry point.
+serde remains the default; this is opt-in.
+
+### Added — Native tokio async parsing (`tokio` feature, issue #24)
+
+`noyalib::tokio_async::from_async_reader` /
+`from_async_reader_multi` parse from any
+`tokio::io::AsyncRead` without `spawn_blocking`.
+`YamlDecoder<T>` is a `tokio_util::codec::Decoder` for
+plugging streaming YAML parsing into a
+`tokio_util::codec::Framed` / tower pipeline. Per-document
+emission boundary follows the YAML 1.2.2 §9.1.2 `---` grammar.
+
+### Changed — npm publish moves to Trusted Publishing / OIDC (issue #33)
+
+`.github/workflows/release-binaries.yml` no longer reads
+`NPM_TOKEN`; both `@noyalib/noyalib-wasm` and `noyalib-mcp`
+publish jobs declare `id-token: write` and rely on the OIDC
+handshake against per-package trusted-publisher policies
+configured at `https://www.npmjs.com/package/<name>/access`.
+`pkg/PUBLISH.md` §6 documents the bootstrap + secret-retirement
+flow.
+
+Compromise window collapses from 1 year (granular access
+token) to ~10 minutes (per-run OIDC token). The
+`--provenance` flag stays attached to both publish steps so
+the npm verified-publisher badge keeps linking back to the
+exact GitHub Actions run.
 
 ## [v0.0.5] — 2026-05-11
 

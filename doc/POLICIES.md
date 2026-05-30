@@ -150,6 +150,69 @@ override via `ParserConfig`.
 The corresponding regression tests live in
 [`tests/stress_load.rs`](../crates/noyalib/tests/stress_load.rs).
 
+#### v0.0.6 opt-in surface limits
+
+The `recovery`, `tokio`, and `sval` modules (each behind its own
+Cargo feature) add their own DoS-resistance posture on top of
+the shared parser limits:
+
+- **`recovery::parse_lenient`** caps the `---`-marker scan at
+  `ParserConfig::max_documents` to defeat marker-spam inputs,
+  and caps the cumulative line-truncation-retry cost at
+  `LenientConfig::truncation_event_budget` (default 1 MiB) to
+  defeat O(n²) re-parse on 10k-line adversarial documents.
+- **`tokio_async::from_async_reader{,_multi}{,_with_config}`**
+  drain the reader through `AsyncReadExt::take(max_document_length)`
+  so a slow-drip producer cannot grow the in-memory buffer
+  beyond the configured limit before the parser fires its own
+  size check. A leading UTF-8 BOM is stripped so Windows-saved
+  buffers round-trip identically to LF-on-Linux equivalents.
+- **`tokio_async::YamlDecoder`** exposes
+  `max_frame_size(usize)`: when the inter-frame `BytesMut`
+  buffer exceeds the cap, the next `decode` call returns
+  `Error::Io(InvalidData)` rather than letting an adversarial
+  producer pin memory by streaming without `---`. The cap is
+  off by default — set it on untrusted-network inputs.
+- **`sval_adapter`** forwards non-finite floats verbatim by
+  default; use `to_sval_writer_with_config` with
+  `SvalConfig::coerce_non_finite_to_null` to emit `Null`
+  instead, required for downstreams like `sval_json` that
+  reject NaN / ±∞.
+
+#### `max_depth` guard correctness (fixed in v0.0.6 / issue #46)
+
+The `max_depth` limit above relies on **balanced** increment /
+decrement of `self.depth` along every code path. Two
+correctness bugs that made the guard either over- or
+under-count were patched in v0.0.6:
+
+- *Over-count, false-positive.* `StreamingMapAccess`'s
+  iterators did not check the access object's `finished` flag.
+  Serde visitors that called `next_entry` after `Ok(None)` —
+  `ValueVisitor::visit_map` does this — re-entered the
+  iterator, read the next event from the **parent** mapping,
+  and treated it as the inner exhausted child's. The
+  recursive `deserialize_any` on each spilled value inflated
+  `self.depth` by one per empty flow `{}`, so a
+  `pnpm-lock.yaml`-shaped input with N consecutive `{}` hit
+  the limit at exactly N = `max_depth`. Fixed: explicit
+  `if self.finished { return Ok(None) }` guards on the three
+  iterators; balanced decrement on `Ok` *and* `Err` in
+  `deserialize_any` / `_seq` / `_map`.
+- *Under-count, silent bypass.* The `NoSpanLoader` path
+  (value-target fast path, `no_std` multi-document loading)
+  incremented `self.depth` on `SequenceStart` / `MappingStart`
+  but **did not compare** against `max_depth`. Adversarial
+  deeply-nested input through that path could consume stack
+  without ever firing the documented guard. Fixed: mirror
+  the span loader's check.
+
+Regression suite: `crates/noyalib/tests/issue_46.rs` — 10
+tests including a 50 000-package full `pnpm-lock-v9` shape,
+3 000 consecutive empty flow mappings, deterministic
+depth-cliff probe at `n ∈ [100, 128, 129, 130, 200, 500,
+1000]`, and a 200-level-deep sequence for the no-span path.
+
 ### Audit pipeline
 
 Each PR runs:
@@ -179,6 +242,26 @@ Weekly (or on-demand) jobs:
   Actions OIDC issuer).
 - Verification recipe in
   [`pkg/VERIFY.md`](../pkg/VERIFY.md).
+
+### OpenSSF Scorecard posture
+
+The scorecard report lives at
+[`scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib`](https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib).
+v0.0.6 lifts the score from `6.5/10` to `~9/10` by closing
+every check that is fixable in source — the four remaining
+items below require external action and are tracked here so
+contributors can see the residual gap:
+
+| Check | Status | Action |
+|---|---|---|
+| Token-Permissions | ✓ fixed | Top-level workflow tokens demoted to `contents: read`; writes scoped per-job. |
+| Pinned-Dependencies | ✓ fixed | Every GitHub Action `uses:` is pinned by full commit SHA, with the human-readable tag in a trailing comment. |
+| Dependency-Update-Tool | ✓ fixed | [`.github/dependabot.yml`](../.github/dependabot.yml) covers `cargo`, `github-actions`, and `npm` ecosystems on a weekly schedule. |
+| Vulnerabilities | ✓ fixed | `serde_yml` / `libyml` dropped from the bench dev-deps in v0.0.6 (RUSTSEC-2025-0067 + -0068); `Cargo.lock` is now clean. |
+| **CII-Best-Practices** | external | Apply for the OpenSSF Best Practices Badge at <https://www.bestpractices.dev/>. The self-assessment maps directly onto noyalib's existing CI / policies posture; tracked for v0.1 milestone. |
+| **Code-Review** | external | Single-maintainer project. The natural fix is a second committer + branch-protection rule requiring review; until then the score will stay 0 by design. |
+| **Branch-Protection** | external | Repo-admin UI configuration required: enable "require approvals", "require codeowners review", "last push approval". |
+| **Contributors** | external | Improves organically as the project gains maintainers / contributing organisations. |
 
 ### Disclosure
 

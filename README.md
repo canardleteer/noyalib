@@ -16,7 +16,7 @@
   <a href="https://crates.io/crates/noyalib"><img src="https://img.shields.io/crates/v/noyalib.svg?style=for-the-badge&color=fc8d62&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/noyalib"><img src="https://img.shields.io/badge/docs.rs-noyalib-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
   <a href="https://lib.rs/crates/noyalib"><img src="https://img.shields.io/badge/lib.rs-noyalib-orange.svg?style=for-the-badge" alt="lib.rs" /></a>
-  <a href="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib"><img src="https://api.securityscorecards.dev/projects/github.com/sebastienrousseau/noyalib/badge" alt="OpenSSF Scorecard" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/noyalib"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/noyalib?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
 </p>
 
 ---
@@ -62,7 +62,7 @@
 
 ```toml
 [dependencies]
-noyalib = "0.0.1"
+noyalib = "0.0.6"
 ```
 
 ### As a CLI tool
@@ -106,7 +106,7 @@ maintainer runbook.
 
 ```toml
 [dependencies]
-noyalib = { version = "0.0.1", default-features = false }
+noyalib = { version = "0.0.6", default-features = false }
 ```
 
 Requires `alloc`. Core data binding (`from_str`, `to_string`, `Value`,
@@ -130,8 +130,8 @@ downstream users pinned to the core's floor.
 
 | Crate | MSRV | Why |
 |---|---|---|
-| `noyalib` (core lib) | **1.75.0** | The committed floor for `default-features = false` + the standard `std` default. Enforced by the dedicated `msrv-1-75-core` CI job. |
-| `noyalib-mcp` | 1.75.0 | Same floor; small dep tree, no edition-2024 transitives. |
+| `noyalib` (core lib) | **1.85.0** | The committed floor since v0.0.5 (edition 2024). Enforced by the dedicated MSRV CI job. |
+| `noyalib-mcp` | 1.85.0 | Same floor; small dep tree, no transitives requiring a higher edition. |
 | `noya-cli` (binaries) | 1.85.0 | `clap_builder 4.6` (a transitive of `clap = "4.5"`) ships in edition 2024. |
 | `noyalib-lsp` | 1.85.0 | LSP transport-stack transitives (`litemap`, `uuid`) require recent stables. |
 
@@ -163,6 +163,9 @@ the application needs.
 | `validator` | `validator` 0.19 | `ValidatedValidator<T>` wrapper | `examples/validation_validator.rs` |
 | `robotics` | — | `Degrees`, `Radians`, `StrictFloat` newtypes | `examples/robotics_polymorphism.rs` |
 | `parallel` | `rayon` 1.10 | `noyalib::parallel::parse<T>` for `---`-separated streams | [Benchmarks](#benchmarks) |
+| `recovery` | — | `noyalib::recovery::parse_lenient` — best-effort tree + error list for LSP / IDE half-typed documents | `examples/recovery_lenient.rs`, `benches/v006_features.rs` |
+| `sval` | `sval` 2 | `impl sval::Value` for `Value` / `Number` / `Mapping` / `MappingAny` / `TaggedValue`, `noyalib::sval_adapter::to_sval_writer` | `examples/sval_streaming.rs`, `benches/v006_features.rs` |
+| `tokio` | `tokio`, `tokio-util`, `bytes` | `noyalib::tokio_async::from_async_reader` / `from_async_reader_multi` and `YamlDecoder` codec for `tokio_util::codec::Framed` pipelines | `examples/tokio_async_reader.rs`, `benches/v006_features.rs` |
 | `simd` | — | `noyalib::simd::*` primitives + parser hot path | [Benchmarks](#benchmarks) |
 | `nightly-simd` | `simd` (nightly toolchain) | `core::simd`-backed `StructuralIter` (32-byte chunks) | [Benchmarks](#benchmarks) |
 | `compat-serde-yaml` | — | `noyalib::compat::serde_yaml` shim for migration | [When not to use noyalib](#when-not-to-use-noyalib) |
@@ -172,7 +175,7 @@ the application needs.
 ```toml
 # Example: rich diagnostics + schema validation
 [dependencies]
-noyalib = { version = "0.0.1", features = ["miette", "validate-schema"] }
+noyalib = { version = "0.0.6", features = ["miette", "validate-schema"] }
 ```
 
 ---
@@ -277,7 +280,7 @@ tables for each.
 -[dependencies]
 -serde_yaml = "0.9"
 +[dependencies]
-+noyalib = "0.0"
++noyalib = "0.0.6"
 ```
 
 ```diff
@@ -485,25 +488,31 @@ Headline numbers (Apple M4 / aarch64, Rust 1.95 stable,
 `--release` with LTO=fat, codegen-units=1, panic=abort,
 criterion `--warm-up-time 2 --measurement-time 4`):
 
-| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `serde_yml` | vs `yaml-spanned` | vs `serde-saphyr` |
-|---|---:|---:|---:|---:|---:|---:|
-| Deserialise simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | **1.96×** | 1.69× | **2.00×** |
-| Deserialise nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.63×** | **1.60×** | **1.76×** |
-| Deserialise large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.48×** | **1.38×** | **1.69×** |
-| Deserialise github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.72×** | **1.74×** | **1.73×** |
-| Deserialise k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — | — |
-| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | — | — | — | — |
-| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | — | — | — | — |
-| Serialise simple | **290 ns** | **4.34×** | — | — | — | — |
-| Serialise nested | **2.25 µs** | **3.00×** | — | — | — | — |
-| Round-trip nested | **12.0 µs** | **1.83×** | — | — | — | — |
-| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | — | 9.2× over memchr loop |
-| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | — | 2.5× over stdlib |
+| Fixture | noyalib | vs `serde_yaml_ng` | vs `yaml-rust2` | vs `yaml-spanned` | vs `serde-saphyr` |
+|---|---:|---:|---:|---:|---:|
+| Deserialise simple (3 fields) | **1.40 µs** | **1.84×** | 1.36× | 1.69× | **2.00×** |
+| Deserialise nested (20 fields) | **9.66 µs** | **1.55×** | 1.25× | **1.60×** | **1.76×** |
+| Deserialise large_list (500 items) | **920 µs** | **1.42×** | 1.19× | **1.38×** | **1.69×** |
+| Deserialise github_actions (deep + comments) | **46.4 µs** | **1.66×** | 1.25× | **1.74×** | **1.73×** |
+| Deserialise k8s multi-document | **85.1 µs** | **1.42×** | 1.11× | — | — |
+| Typed deserialise simple (streaming) | **1.22 µs** | **1.72×** | — | — | — |
+| Typed deserialise nested (streaming) | **7.08 µs** | **1.55×** | — | — | — |
+| Serialise simple | **290 ns** | **4.34×** | — | — | — |
+| Serialise nested | **2.25 µs** | **3.00×** | — | — | — |
+| Round-trip nested | **12.0 µs** | **1.83×** | — | — | — |
+| Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | 9.2× over memchr loop |
+| SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | 2.5× over stdlib |
+
+(`serde_yml` was previously a comparison column — retired in
+v0.0.6 since RUSTSEC-2025-0068 flagged it unsound + unmaintained;
+the bench arm was dropped so the OpenSSF Scorecard Vulnerabilities
+check stays clean. The headline ratios above are unchanged for
+the remaining four competitors.)
 
 `noyalib` is faster than **every other pure-Rust YAML library on
-every deserialize fixture measured**. Speedup ranges across the five
+every deserialize fixture measured**. Speedup ranges across the four
 competitors above: **1.69×–2.00×** vs `serde-saphyr`,
-**1.48×–1.96×** vs `serde_yml`, **1.42×–1.84×** vs `serde_yaml_ng`,
+**1.42×–1.84×** vs `serde_yaml_ng`,
 **1.38×–1.74×** vs `yaml-spanned`, **1.11×–1.36×** vs `yaml-rust2`.
 Serialize is **3.00×–4.34×** ahead of `serde_yaml_ng`.
 
@@ -1475,7 +1484,13 @@ value.interpolate_properties_lossy(&map);
 - `cargo vet` clean — every dependency in the graph has a local
   audit or imported coverage from Mozilla / Google / Bytecode
   Alliance / Embark / ISRG audit sets.
-- `OpenSSF Scorecard` tracked, badge in the header.
+- `OpenSSF Scorecard` tracked, badge in the header — v0.0.6
+  lifts the score from `6.5/10` to `~9/10` by demoting workflow
+  tokens to least privilege, pinning every GitHub Action by
+  SHA, wiring Dependabot, and retiring the unmaintained
+  `serde_yml` / `libyml` bench dev-deps. See
+  [`doc/POLICIES.md` § OpenSSF Scorecard posture](doc/POLICIES.md#openssf-scorecard-posture)
+  for the per-check breakdown.
 - `SLSA L3` build provenance + sigstore signing on every release.
 - `REUSE.software` 3.3 compliant — every source file carries
   SPDX headers.
