@@ -1651,6 +1651,8 @@ pub(crate) fn resolve_plain_ext(
                     #[cfg(feature = "lossless-u64")]
                     ParsedInteger::Unsigned(n) => Scalar::Uint(n),
                 }
+            } else if lossless_u64 && looks_like_integer_literal(s, legacy_octal) {
+                Scalar::Str(Cow::Borrowed(s))
             } else if legacy_sexagesimal {
                 if let Some(n) = parse_sexagesimal_int(s) {
                     Scalar::Int(n)
@@ -1668,6 +1670,24 @@ pub(crate) fn resolve_plain_ext(
             }
         }
     }
+}
+
+fn looks_like_integer_literal(s: &str, legacy_octal: bool) -> bool {
+    let b = s.as_bytes();
+    if b.is_empty() {
+        return false;
+    }
+    if b.len() > 2 && b[0] == b'0' && (bytes_to_char(b[1]) == 'x' || bytes_to_char(b[1]) == 'X') {
+        return b[2..].iter().all(|c| c.is_ascii_hexdigit());
+    }
+    if b.len() > 2 && b[0] == b'0' && (bytes_to_char(b[1]) == 'o' || bytes_to_char(b[1]) == 'O') {
+        return b[2..].iter().all(|c| (b'0'..=b'7').contains(c));
+    }
+    if legacy_octal && b.len() >= 2 && b[0] == b'0' {
+        return b[1..].iter().all(|c| (b'0'..=b'7').contains(c));
+    }
+    let start = if b[0] == b'+' || b[0] == b'-' { 1 } else { 0 };
+    start < b.len() && b[start..].iter().all(u8::is_ascii_digit)
 }
 
 enum ParsedInteger {

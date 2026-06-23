@@ -141,6 +141,22 @@ fn test_number_integer() {
     assert!((num.as_f64() - 42.0).abs() < 0.001);
 }
 
+#[cfg(feature = "lossless-u64")]
+#[test]
+fn test_number_unsigned() {
+    let num = Number::Unsigned(u64::MAX);
+    assert!(num.is_integer());
+    assert!(!num.is_float());
+    assert_eq!(num.as_i64(), None);
+    assert_eq!(num.as_u64(), Some(u64::MAX));
+    assert_eq!(num.to_string(), "18446744073709551615");
+
+    let value = Value::from(u64::MAX);
+    assert_eq!(value.as_u64(), Some(u64::MAX));
+    assert!(value.as_i64().is_none());
+    assert!(!matches!(value, Value::Number(Number::Float(_))));
+}
+
 #[test]
 fn test_number_float() {
     let num = Number::Float(3.125);
@@ -155,6 +171,19 @@ fn test_number_display() {
     assert_eq!(Number::Integer(42).to_string(), "42");
     assert_eq!(Number::Integer(-42).to_string(), "-42");
     assert!(Number::Float(3.125).to_string().contains("3.125"));
+}
+
+#[cfg(feature = "lossless-u64")]
+#[test]
+fn test_number_from_str_unsigned_radix() {
+    assert_eq!(
+        "18446744073709551615".parse::<Number>().unwrap().as_u64(),
+        Some(u64::MAX)
+    );
+    assert_eq!(
+        "0xffffffffffffffff".parse::<Number>().unwrap().as_u64(),
+        Some(u64::MAX)
+    );
 }
 
 // ============================================================================
@@ -2485,9 +2514,11 @@ fn test_number_from_impls() {
     assert_eq!(Number::from(100_u64), Number::Integer(100));
     assert_eq!(Number::from(42_usize), Number::Integer(42));
 
-    // u64 > i64::MAX should become Float
     let big = u64::MAX;
+    #[cfg(not(feature = "lossless-u64"))]
     assert_eq!(Number::from(big), Number::Float(big as f64));
+    #[cfg(feature = "lossless-u64")]
+    assert_eq!(Number::from(big), Number::Unsigned(big));
 
     assert_eq!(Number::from(1.5_f32), Number::Float(1.5));
     assert_eq!(Number::from(2.5_f64), Number::Float(2.5));
@@ -2499,7 +2530,10 @@ fn test_value_from_u64() {
     assert_eq!(v.as_i64(), Some(42));
 
     let v = Value::from(u64::MAX);
+    #[cfg(not(feature = "lossless-u64"))]
     assert!(v.as_f64().is_some());
+    #[cfg(feature = "lossless-u64")]
+    assert_eq!(v.as_u64(), Some(u64::MAX));
 }
 
 #[test]
