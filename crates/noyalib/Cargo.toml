@@ -497,6 +497,10 @@ noyavalidate = ["std", "miette", "miette/fancy", "validate-schema"]
 # re-export of the archived upstream crate. Off by default so users
 # who do not need migration help do not see the extra surface.
 compat-serde-yaml = []
+# Opt-in unsigned integer model for YAML `!!int` scalars in the
+# `i64::MAX + 1..=u64::MAX` range. Dependency-free; off by default
+# because it exposes an additional public `Number` variant.
+lossless-u64 = []
 # JSON Schema codegen via `schemars`. With this on you can
 # `#[derive(noyalib::JsonSchema)]` for a Rust type and call
 # `noyalib::schema_for::<T>()` / `schema_for_yaml::<T>()` to obtain

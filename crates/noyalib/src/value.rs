@@ -1334,6 +1334,10 @@ pub type Sequence = Vec<Value>;
 pub enum Number {
     /// A signed integer.
     Integer(i64),
+    /// An unsigned integer that cannot be represented by `i64`.
+    #[cfg(feature = "lossless-u64")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "lossless-u64")))]
+    Unsigned(u64),
     /// A floating-point number.
     Float(f64),
 }
@@ -1355,6 +1359,8 @@ impl Number {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Number::Integer(n) => Some(*n),
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => i64::try_from(*n).ok(),
             Number::Float(_) => None,
         }
     }
@@ -1375,6 +1381,8 @@ impl Number {
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Number::Integer(n) if *n >= 0 => Some(*n as u64),
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => Some(*n),
             _ => None,
         }
     }
@@ -1396,6 +1404,8 @@ impl Number {
     pub fn as_f64(&self) -> f64 {
         match self {
             Number::Integer(n) => *n as f64,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => *n as f64,
             Number::Float(n) => *n,
         }
     }
@@ -1411,7 +1421,12 @@ impl Number {
     /// ```
     #[must_use]
     pub fn is_integer(&self) -> bool {
-        matches!(self, Number::Integer(_))
+        match self {
+            Number::Integer(_) => true,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(_) => true,
+            Number::Float(_) => false,
+        }
     }
 
     /// Returns `true` if the number is a float.
@@ -1441,7 +1456,12 @@ impl Number {
     /// ```
     #[must_use]
     pub fn is_i64(&self) -> bool {
-        matches!(self, Number::Integer(_))
+        match self {
+            Number::Integer(_) => true,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => i64::try_from(*n).is_ok(),
+            Number::Float(_) => false,
+        }
     }
 
     /// Returns `true` if the number can be represented as a `u64`.
@@ -1458,7 +1478,12 @@ impl Number {
     /// ```
     #[must_use]
     pub fn is_u64(&self) -> bool {
-        matches!(self, Number::Integer(n) if *n >= 0)
+        match self {
+            Number::Integer(n) => *n >= 0,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(_) => true,
+            Number::Float(_) => false,
+        }
     }
 
     /// Returns `true` if the number can be represented as an `f64`.
@@ -1497,6 +1522,8 @@ impl Number {
         match self {
             Number::Float(n) => n.is_nan(),
             Number::Integer(_) => false,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(_) => false,
         }
     }
 
@@ -1518,6 +1545,8 @@ impl Number {
         match self {
             Number::Float(n) => n.is_infinite(),
             Number::Integer(_) => false,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(_) => false,
         }
     }
 
@@ -1540,6 +1569,8 @@ impl Number {
         match self {
             Number::Float(n) => n.is_finite(),
             Number::Integer(_) => true,
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(_) => true,
         }
     }
 }
@@ -1548,6 +1579,8 @@ impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Number::Integer(n) => write!(f, "{n}"),
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => write!(f, "{n}"),
             Number::Float(n) => write!(f, "{n}"),
         }
     }
@@ -1587,6 +1620,10 @@ impl FromStr for Number {
         if let Ok(n) = s.parse::<i64>() {
             return Ok(Number::Integer(n));
         }
+        #[cfg(feature = "lossless-u64")]
+        if let Ok(n) = s.parse::<u64>() {
+            return Ok(Number::Unsigned(n));
+        }
 
         // Handle hex (0x), octal (0o), and binary (0b) integers
         if s.len() > 2 {
@@ -1596,15 +1633,27 @@ impl FromStr for Number {
                     if let Ok(n) = i64::from_str_radix(rest, 16) {
                         return Ok(Number::Integer(n));
                     }
+                    #[cfg(feature = "lossless-u64")]
+                    if let Ok(n) = u64::from_str_radix(rest, 16) {
+                        return Ok(Number::Unsigned(n));
+                    }
                 }
                 "0o" | "0O" => {
                     if let Ok(n) = i64::from_str_radix(rest, 8) {
                         return Ok(Number::Integer(n));
                     }
+                    #[cfg(feature = "lossless-u64")]
+                    if let Ok(n) = u64::from_str_radix(rest, 8) {
+                        return Ok(Number::Unsigned(n));
+                    }
                 }
                 "0b" | "0B" => {
                     if let Ok(n) = i64::from_str_radix(rest, 2) {
                         return Ok(Number::Integer(n));
+                    }
+                    #[cfg(feature = "lossless-u64")]
+                    if let Ok(n) = u64::from_str_radix(rest, 2) {
+                        return Ok(Number::Unsigned(n));
                     }
                 }
                 _ => {}
@@ -1624,6 +1673,8 @@ impl PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Number::Integer(a), Number::Integer(b)) => a == b,
+            #[cfg(feature = "lossless-u64")]
+            (Number::Unsigned(a), Number::Unsigned(b)) => a == b,
             (Number::Float(a), Number::Float(b)) => {
                 // Treat NaN == NaN to satisfy the Eq contract (reflexivity)
                 (a.is_nan() && b.is_nan()) || a == b
@@ -1642,8 +1693,13 @@ impl Hash for Number {
                 0u8.hash(state);
                 n.hash(state);
             }
-            Number::Float(n) => {
+            #[cfg(feature = "lossless-u64")]
+            Number::Unsigned(n) => {
                 1u8.hash(state);
+                n.hash(state);
+            }
+            Number::Float(n) => {
+                2u8.hash(state);
                 // Eq/Hash contract: equal values must hash equal. Two
                 // edge cases break naive `to_bits()` hashing:
                 //   - `+0.0 == -0.0` is true under IEEE 754 (and our
@@ -1675,6 +1731,24 @@ impl Ord for Number {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Number::Integer(a), Number::Integer(b)) => a.cmp(b),
+            #[cfg(feature = "lossless-u64")]
+            (Number::Unsigned(a), Number::Unsigned(b)) => a.cmp(b),
+            #[cfg(feature = "lossless-u64")]
+            (Number::Integer(a), Number::Unsigned(b)) => {
+                if *a < 0 {
+                    Ordering::Less
+                } else {
+                    (*a as u64).cmp(b)
+                }
+            }
+            #[cfg(feature = "lossless-u64")]
+            (Number::Unsigned(a), Number::Integer(b)) => {
+                if *b < 0 {
+                    Ordering::Greater
+                } else {
+                    a.cmp(&(*b as u64))
+                }
+            }
             (Number::Float(a), Number::Float(b)) => {
                 // Handle NaN: treat all NaN as equal and greater than any non-NaN
                 match (a.is_nan(), b.is_nan()) {
@@ -1714,6 +1788,22 @@ impl Ord for Number {
             (Number::Float(a), Number::Integer(b)) => {
                 // Delegate to the Integer-Float case and invert.
                 match Number::Integer(*b).cmp(&Number::Float(*a)) {
+                    Ordering::Less => Ordering::Greater,
+                    Ordering::Greater => Ordering::Less,
+                    Ordering::Equal => Ordering::Equal,
+                }
+            }
+            #[cfg(feature = "lossless-u64")]
+            (Number::Unsigned(a), Number::Float(b)) => {
+                if b.is_nan() {
+                    Ordering::Less
+                } else {
+                    (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+                }
+            }
+            #[cfg(feature = "lossless-u64")]
+            (Number::Float(a), Number::Unsigned(b)) => {
+                match Number::Unsigned(*b).cmp(&Number::Float(*a)) {
                     Ordering::Less => Ordering::Greater,
                     Ordering::Greater => Ordering::Less,
                     Ordering::Equal => Ordering::Equal,
@@ -1779,6 +1869,15 @@ impl From<u64> for Number {
     fn from(v: u64) -> Self {
         if v <= i64::MAX as u64 {
             Number::Integer(v as i64)
+        } else if cfg!(feature = "lossless-u64") {
+            #[cfg(feature = "lossless-u64")]
+            {
+                Number::Unsigned(v)
+            }
+            #[cfg(not(feature = "lossless-u64"))]
+            {
+                Number::Float(v as f64)
+            }
         } else {
             Number::Float(v as f64)
         }
@@ -3875,9 +3974,7 @@ impl ValueIndex for &Value {
     fn index_into(self, value: &Value) -> Option<&Value> {
         match self {
             Value::String(s) => s.as_str().index_into(value),
-            Value::Number(Number::Integer(n)) if *n >= 0 => {
-                usize::try_from(*n).ok()?.index_into(value)
-            }
+            Value::Number(n) => usize::try_from(n.as_u64()?).ok()?.index_into(value),
             _ => None,
         }
     }
@@ -3885,9 +3982,7 @@ impl ValueIndex for &Value {
     fn index_into_mut(self, value: &mut Value) -> Option<&mut Value> {
         match self {
             Value::String(s) => s.as_str().index_into_mut(value),
-            Value::Number(Number::Integer(n)) if *n >= 0 => {
-                usize::try_from(*n).ok()?.index_into_mut(value)
-            }
+            Value::Number(n) => usize::try_from(n.as_u64()?).ok()?.index_into_mut(value),
             _ => None,
         }
     }
@@ -3896,9 +3991,12 @@ impl ValueIndex for &Value {
     fn index_or_insert(self, value: &mut Value) -> &mut Value {
         match self {
             Value::String(s) => s.as_str().index_or_insert(value),
-            Value::Number(Number::Integer(n)) if *n >= 0 => {
-                let idx =
-                    usize::try_from(*n).unwrap_or_else(|_| panic!("index {} overflows usize", n));
+            Value::Number(n) => {
+                let as_u64 = n
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("cannot index with {:?}", self));
+                let idx = usize::try_from(as_u64)
+                    .unwrap_or_else(|_| panic!("index {} overflows usize", as_u64));
                 idx.index_or_insert(value)
             }
             _ => panic!("cannot index with {:?}", self),
@@ -4112,7 +4210,7 @@ impl<'de> Deserialize<'de> for Value {
             }
 
             fn visit_u64<E>(self, v: u64) -> Result<Value, E> {
-                Ok(Value::Number(Number::Integer(v as i64)))
+                Ok(Value::Number(Number::from(v)))
             }
 
             fn visit_f64<E>(self, v: f64) -> Result<Value, E> {
@@ -4228,6 +4326,8 @@ impl Serialize for Value {
             Value::Null => serializer.serialize_none(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::Number(Number::Integer(n)) => serializer.serialize_i64(*n),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => serializer.serialize_u64(*n),
             Value::Number(Number::Float(n)) => serializer.serialize_f64(*n),
             Value::String(s) => serializer.serialize_str(s),
             Value::Sequence(s) => s.serialize(serializer),
@@ -4324,6 +4424,8 @@ impl<'de> serde::Deserializer<'de> for &'de Value {
             Value::Null => visitor.visit_unit(),
             Value::Bool(b) => visitor.visit_bool(*b),
             Value::Number(Number::Integer(n)) => visitor.visit_i64(*n),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => visitor.visit_u64(*n),
             Value::Number(Number::Float(n)) => visitor.visit_f64(*n),
             Value::String(s) => visitor.visit_borrowed_str(s),
             Value::Sequence(seq) => visitor.visit_seq(ValueSeqAccess { iter: seq.iter() }),
