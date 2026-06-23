@@ -9,6 +9,7 @@ use std::str::FromStr;
 use noyalib::{
     Mapping, MappingAny, MaybeTag, Number, Tag, TaggedValue, Value, check_for_tag, from_str, nobang,
 };
+#[cfg(feature = "lossless-u64")]
 use serde::Deserialize;
 
 // ============================================================================

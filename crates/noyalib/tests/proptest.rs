@@ -16,10 +16,22 @@ use proptest::prelude::*;
 // ============================================================================
 
 /// Generate arbitrary Number values
+#[cfg(not(feature = "lossless-u64"))]
 fn arb_number() -> impl Strategy<Value = Number> {
     prop_oneof![
         any::<i64>().prop_map(Number::Integer),
-        #[cfg(feature = "lossless-u64")]
+        // Use finite floats to avoid NaN comparison issues
+        any::<f64>()
+            .prop_filter("finite floats only", |f| f.is_finite())
+            .prop_map(Number::Float),
+    ]
+}
+
+/// Generate arbitrary Number values, including canonical unsigned values.
+#[cfg(feature = "lossless-u64")]
+fn arb_number() -> impl Strategy<Value = Number> {
+    prop_oneof![
+        any::<i64>().prop_map(Number::Integer),
         ((i64::MAX as u64 + 1)..=u64::MAX).prop_map(Number::Unsigned),
         // Use finite floats to avoid NaN comparison issues
         any::<f64>()
