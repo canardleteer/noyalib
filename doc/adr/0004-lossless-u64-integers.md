@@ -71,7 +71,7 @@ When both compile-time and runtime opt-ins are active:
 
 ## Consequences
 
-- **Positive:** semver components, IDs, and other legitimate unsigned
+- **Positive:** identifiers, counters, and other legitimate unsigned
   YAML integers can round-trip without application-level string
   workarounds.
 - **Positive:** the implementation can reuse existing safe integer

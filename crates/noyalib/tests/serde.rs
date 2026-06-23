@@ -61,16 +61,16 @@ fn test_serde_unsigned() {
 #[test]
 fn test_serde_lossless_u64_struct_field() {
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct Version {
-        major: u64,
+    struct Record {
+        id: u64,
     }
 
     let cfg = ParserConfig::new().lossless_u64_integers(true);
-    for major in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
-        let value = Version { major };
+    for id in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+        let value = Record { id };
         let yaml = to_string(&value).unwrap();
-        assert!(yaml.contains(&format!("major: {major}")));
-        let parsed: Version = from_str_with_config(&yaml, &cfg).unwrap();
+        assert!(yaml.contains(&format!("id: {id}")));
+        let parsed: Record = from_str_with_config(&yaml, &cfg).unwrap();
         assert_eq!(parsed, value);
     }
 }
