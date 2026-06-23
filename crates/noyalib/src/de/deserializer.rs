@@ -169,6 +169,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Null => self.wrap_err(visitor.visit_none()),
             Value::Bool(b) => self.wrap_err(visitor.visit_bool(*b)),
             Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_i64(*n)),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => self.wrap_err(visitor.visit_u64(*n)),
             Value::Number(Number::Float(n)) => self.wrap_err(visitor.visit_f64(*n)),
             Value::String(s) => self.wrap_err(visitor.visit_str(s)),
             Value::Sequence(_) => self.deserialize_seq(visitor),
@@ -850,6 +852,8 @@ fn type_name(value: &Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(_) => "bool".to_owned(),
         Value::Number(Number::Integer(_)) => "integer".to_owned(),
+        #[cfg(feature = "lossless-u64")]
+        Value::Number(Number::Unsigned(_)) => "integer".to_owned(),
         Value::Number(Number::Float(_)) => "float".to_owned(),
         Value::String(_) => "string".to_owned(),
         Value::Sequence(_) => "sequence".to_owned(),

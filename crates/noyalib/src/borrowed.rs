@@ -386,6 +386,8 @@ impl Serialize for BorrowedValue<'_> {
             Self::Bool(b) => serializer.serialize_bool(*b),
             Self::Number(n) => match n {
                 crate::value::Number::Integer(i) => serializer.serialize_i64(*i),
+                #[cfg(feature = "lossless-u64")]
+                crate::value::Number::Unsigned(u) => serializer.serialize_u64(*u),
                 crate::value::Number::Float(f) => serializer.serialize_f64(*f),
             },
             Self::String(s) => serializer.serialize_str(s),

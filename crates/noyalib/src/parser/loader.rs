@@ -46,6 +46,8 @@ pub struct ParseConfig {
     pub no_schema: bool,
     pub legacy_octal_numbers: bool,
     pub legacy_sexagesimal: bool,
+    #[cfg(feature = "lossless-u64")]
+    pub lossless_u64_integers: bool,
     pub policies: Vec<Arc<dyn crate::policy::Policy>>,
 }
 
@@ -71,6 +73,8 @@ impl Default for ParseConfig {
             no_schema: false,
             legacy_octal_numbers: false,
             legacy_sexagesimal: false,
+            #[cfg(feature = "lossless-u64")]
+            lossless_u64_integers: false,
             policies: Vec::new(),
         }
     }
@@ -106,6 +110,8 @@ impl From<&crate::de::ParserConfig> for ParseConfig {
             no_schema: c.no_schema,
             legacy_octal_numbers: c.legacy_octal_numbers,
             legacy_sexagesimal: c.legacy_sexagesimal,
+            #[cfg(feature = "lossless-u64")]
+            lossless_u64_integers: c.lossless_u64_integers,
             policies: c.policies.clone(),
         }
     }
@@ -955,6 +961,17 @@ fn value_to_key_string(value: Value) -> Option<String> {
         Value::Bool(b) => Some(if b { "true".into() } else { "false".into() }),
         Value::Null => Some("null".into()),
         Value::Number(Number::Integer(n)) => {
+            #[cfg(feature = "fast-int")]
+            {
+                Some(itoa::Buffer::new().format(n).to_owned())
+            }
+            #[cfg(not(feature = "fast-int"))]
+            {
+                Some(n.to_string())
+            }
+        }
+        #[cfg(feature = "lossless-u64")]
+        Value::Number(Number::Unsigned(n)) => {
             #[cfg(feature = "fast-int")]
             {
                 Some(itoa::Buffer::new().format(n).to_owned())
