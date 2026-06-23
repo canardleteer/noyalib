@@ -238,6 +238,14 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
     {
         match self.value {
             Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_i64(*n)),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => match i64::try_from(*n) {
+                Ok(n) => self.wrap_err(visitor.visit_i64(n)),
+                Err(_) => self.wrap_err(Err(Error::TypeMismatch {
+                    expected: "integer",
+                    found: type_name(self.value),
+                })),
+            },
             Value::Number(Number::Float(n))
                 if n.fract() == 0.0
                     && *n >= i64::MIN as f64
@@ -282,6 +290,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Value::Number(Number::Integer(n)) if *n >= 0 => {
                 self.wrap_err(visitor.visit_u64(*n as u64))
             }
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => self.wrap_err(visitor.visit_u64(*n)),
             Value::Number(Number::Float(n))
                 if n.fract() == 0.0 && *n >= 0.0 && *n <= u64::MAX as f64 && !n.is_nan() =>
             {
@@ -308,6 +318,8 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
         match self.value {
             Value::Number(Number::Float(n)) => self.wrap_err(visitor.visit_f64(*n)),
             Value::Number(Number::Integer(n)) => self.wrap_err(visitor.visit_f64(*n as f64)),
+            #[cfg(feature = "lossless-u64")]
+            Value::Number(Number::Unsigned(n)) => self.wrap_err(visitor.visit_f64(*n as f64)),
             _ => self.wrap_err(Err(Error::TypeMismatch {
                 expected: "float",
                 found: type_name(self.value),

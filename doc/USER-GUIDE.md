@@ -377,6 +377,10 @@ This contract holds for all three tag-bearing shapes:
 | `!!str 42` | `Value::String("42")` *(core tag — resolves)* |
 | `!!int 42` | `Value::Number(Integer(42))` *(core tag — resolves)* |
 
+With the `lossless-u64` feature enabled and
+`ParserConfig::lossless_u64_integers(true)`, `!!int` scalars in
+`(i64::MAX, u64::MAX]` resolve as `Value::Number(Unsigned(_))`.
+
 **Reading through the wrapper.** Two helpers on `Value` step
 through the tag for transparent reads:
 
