@@ -80,6 +80,19 @@ impl Default for ParseConfig {
     }
 }
 
+impl ParseConfig {
+    pub(crate) fn lossless_u64_integers(&self) -> bool {
+        #[cfg(feature = "lossless-u64")]
+        {
+            self.lossless_u64_integers
+        }
+        #[cfg(not(feature = "lossless-u64"))]
+        {
+            false
+        }
+    }
+}
+
 impl From<&crate::de::ParserConfig> for ParseConfig {
     fn from(c: &crate::de::ParserConfig) -> Self {
         ParseConfig {
@@ -369,7 +382,7 @@ impl<'a> Loader<'a> {
                 span,
             } => {
                 let v = if let Some(t) = tag {
-                    resolve_tagged_scalar(&t.0, &t.1, &value)?
+                    resolve_tagged_scalar(&t.0, &t.1, &value, self.config.lossless_u64_integers())?
                 } else if style != crate::parser::ScalarStyle::Plain {
                     // Quoted/literal/folded scalars always resolve as
                     // strings — YAML schema resolution only applies to
@@ -383,10 +396,13 @@ impl<'a> Loader<'a> {
                         self.config.no_schema,
                         self.config.legacy_octal_numbers,
                         self.config.legacy_sexagesimal,
+                        self.config.lossless_u64_integers(),
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),
                         crate::streaming::Scalar::Int(i) => Value::Number(Number::Integer(i)),
+                        #[cfg(feature = "lossless-u64")]
+                        crate::streaming::Scalar::Uint(u) => Value::Number(Number::Unsigned(u)),
                         crate::streaming::Scalar::Float(f) => Value::Number(Number::Float(f)),
                         crate::streaming::Scalar::Str(s) => Value::String(s.into_owned()),
                     }
@@ -792,7 +808,7 @@ impl<'a> NoSpanLoader<'a> {
                 ..
             } => {
                 let v = if let Some(t) = tag {
-                    resolve_tagged_scalar(&t.0, &t.1, &value)?
+                    resolve_tagged_scalar(&t.0, &t.1, &value, self.config.lossless_u64_integers())?
                 } else if style != crate::parser::ScalarStyle::Plain {
                     Value::String(value.into_owned())
                 } else {
@@ -803,10 +819,13 @@ impl<'a> NoSpanLoader<'a> {
                         self.config.no_schema,
                         self.config.legacy_octal_numbers,
                         self.config.legacy_sexagesimal,
+                        self.config.lossless_u64_integers(),
                     ) {
                         crate::streaming::Scalar::Null => Value::Null,
                         crate::streaming::Scalar::Bool(b) => Value::Bool(b),
                         crate::streaming::Scalar::Int(i) => Value::Number(Number::Integer(i)),
+                        #[cfg(feature = "lossless-u64")]
+                        crate::streaming::Scalar::Uint(u) => Value::Number(Number::Unsigned(u)),
                         crate::streaming::Scalar::Float(f) => Value::Number(Number::Float(f)),
                         crate::streaming::Scalar::Str(s) => Value::String(s.into_owned()),
                     }
@@ -1053,7 +1072,12 @@ fn concat_str(a: &str, b: &str) -> String {
 /// Resolve a tagged scalar into a typed `Value`. Handles the YAML 1.2
 /// core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
 /// and any custom tag falls through to the `Tagged` wrapper.
-fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Value> {
+fn resolve_tagged_scalar(
+    handle: &str,
+    suffix: &str,
+    value: &str,
+    lossless_u64: bool,
+) -> Result<Value> {
     // Canonicalize tag: handle `!!foo` (secondary) → `tag:yaml.org,2002:foo`.
     let is_core = handle == "!!"
         || handle == "tag:yaml.org,2002:"
@@ -1067,18 +1091,16 @@ fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Valu
                     .strip_prefix("0x")
                     .or_else(|| trimmed.strip_prefix("0X"))
                 {
-                    i64::from_str_radix(rest, 16).ok()
+                    parse_tagged_integer(rest, 16, lossless_u64)
                 } else if let Some(rest) = trimmed
                     .strip_prefix("0o")
                     .or_else(|| trimmed.strip_prefix("0O"))
                 {
-                    i64::from_str_radix(rest, 8).ok()
+                    parse_tagged_integer(rest, 8, lossless_u64)
                 } else {
-                    trimmed.parse::<i64>().ok()
+                    parse_tagged_decimal_integer(trimmed, lossless_u64)
                 };
-                parsed
-                    .map(|n| Value::Number(Number::Integer(n)))
-                    .ok_or_else(|| Error::FailedToParseNumber(format!("!!int {value}")))
+                parsed.ok_or_else(|| Error::FailedToParseNumber(format!("!!int {value}")))
             }
             "float" => {
                 let trimmed = value.trim();
@@ -1117,6 +1139,39 @@ fn resolve_tagged_scalar(handle: &str, suffix: &str, value: &str) -> Result<Valu
             Value::String(value.to_owned()),
         ))))
     }
+}
+
+fn parse_tagged_decimal_integer(trimmed: &str, lossless_u64: bool) -> Option<Value> {
+    #[cfg(not(feature = "lossless-u64"))]
+    let _ = lossless_u64;
+    if let Ok(n) = trimmed.parse::<i64>() {
+        return Some(Value::Number(Number::Integer(n)));
+    }
+    #[cfg(feature = "lossless-u64")]
+    if lossless_u64 {
+        return trimmed
+            .parse::<u64>()
+            .ok()
+            .map(|n| Value::Number(Number::Unsigned(n)));
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn parse_tagged_integer(rest: &str, radix: u32, lossless_u64: bool) -> Option<Value> {
+    #[cfg(not(feature = "lossless-u64"))]
+    let _ = lossless_u64;
+    if let Ok(n) = i64::from_str_radix(rest, radix) {
+        return Some(Value::Number(Number::Integer(n)));
+    }
+    #[cfg(feature = "lossless-u64")]
+    if lossless_u64 {
+        return u64::from_str_radix(rest, radix)
+            .ok()
+            .map(|n| Value::Number(Number::Unsigned(n)));
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 /// Run every registered policy against this parser event. The
