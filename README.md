@@ -179,6 +179,15 @@ the application needs.
 noyalib = { version = "0.0.11", features = ["miette", "validate-schema"] }
 ```
 
+**Optional features:** `lossless-u64` preserves YAML integer scalars above
+`i64::MAX` as `Number::Unsigned(u64)` instead of lossy `f64` widening —
+useful for distributed-system IDs, content hashes, and timestamp fields.
+Enable the Cargo feature, then opt in at runtime with
+`ParserConfig::lossless_u64_integers(true)` and
+`SerializerConfig::lossless_u64_integers(true)`. See
+[`doc/adr/0004-lossless-u64-integers.md`](doc/adr/0004-lossless-u64-integers.md)
+for rationale and migration notes.
+
 ---
 
 ## Quick Start
@@ -503,6 +512,7 @@ criterion `--warm-up-time 2 --measurement-time 4`):
 | Round-trip nested | **12.0 µs** | **1.83×** | — | — | — |
 | Structural-discovery (1 MiB, nightly-SIMD) | **311 µs** | — | — | — | 9.2× over memchr loop |
 | SWAR decimal parse (`i64::MAX`) | **9.75 ns** | — | — | — | 2.5× over stdlib |
+| Lossless-u64 parser resolution (`benches/lossless_u64.rs`) | see harness | — | — | — | knob on vs off for large unsigned scalars |
 
 (`serde_yml` was previously a comparison column — retired in
 v0.0.6 since RUSTSEC-2025-0068 flagged it unsound + unmaintained;
@@ -1199,6 +1209,7 @@ cargo run --example all
 | | `stream` | Multi-document streams |
 | | `types` | Custom YAML tags |
 | | `binary` | Large ints, .inf, .nan, hex/octal |
+| | `lossless_u64` | Opt-in `Number::Unsigned` for scalars above `i64::MAX` |
 | **Security** | `strict` | strict\_booleans, DuplicateKeyPolicy |
 | | `secure` | ParserConfig limits |
 | | `schema` | Schema validation |
