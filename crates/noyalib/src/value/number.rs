@@ -374,11 +374,11 @@ impl Hash for Number {
             }
             #[cfg(feature = "lossless-u64")]
             Number::Unsigned(n) => {
-                1u8.hash(state);
+                2u8.hash(state);
                 n.hash(state);
             }
             Number::Float(n) => {
-                2u8.hash(state);
+                1u8.hash(state);
                 // Eq/Hash contract: equal values must hash equal. Two
                 // edge cases break naive `to_bits()` hashing:
                 //   - `+0.0 == -0.0` is true under IEEE 754 (and our

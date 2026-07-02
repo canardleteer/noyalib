@@ -637,6 +637,19 @@ fn test_number_hash() {
     assert_eq!(hash_value(&nan1), hash_value(&nan2));
 }
 
+#[cfg(feature = "lossless-u64")]
+#[test]
+fn test_number_hash_lossless_u64_tags() {
+    // Float must keep discriminant 1 when lossless-u64 is enabled.
+    let f1 = Number::Float(3.125);
+    let f2 = Number::Float(3.125);
+    assert_eq!(hash_value(&f1), hash_value(&f2));
+
+    let unsigned = Number::Unsigned(u64::MAX);
+    assert_eq!(hash_value(&unsigned), hash_value(&unsigned));
+    assert_ne!(hash_value(&f1), hash_value(&unsigned));
+}
+
 #[test]
 fn test_value_hash() {
     // Same values should have same hash
