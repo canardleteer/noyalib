@@ -201,6 +201,11 @@ name = "lossless_edit"
 path = "examples/lossless_edit.rs"
 
 [[example]]
+name = "lossless_u64"
+path = "examples/lossless_u64.rs"
+required-features = ["lossless-u64"]
+
+[[example]]
 name = "comments_at"
 path = "examples/comments_at.rs"
 
