@@ -444,6 +444,11 @@ name = "numeric_parse"
 harness = false
 
 [[bench]]
+name = "lossless_u64"
+harness = false
+required-features = ["lossless-u64"]
+
+[[bench]]
 name = "v006_features"
 harness = false
 required-features = ["recovery", "sval", "tokio"]
