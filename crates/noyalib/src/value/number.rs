@@ -406,6 +406,14 @@ impl PartialOrd for Number {
     }
 }
 
+/// Total ordering for [`Number`].
+///
+/// Same-kind comparisons (`Integer` vs `Integer`, `Unsigned` vs `Unsigned`,
+/// `Float` vs `Float`) use exact arithmetic. Cross-kind comparisons between
+/// integers and floats widen the integer side to [`f64`], matching the
+/// existing `Integer` ↔ `Float` arms. Values with magnitude above 2^53 may
+/// compare [`Ordering::Equal`] to nearby floats because of IEEE rounding; for
+/// exact ordering, compare within the same kind.
 impl Ord for Number {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
