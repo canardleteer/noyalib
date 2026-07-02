@@ -169,6 +169,7 @@ the application needs.
 | `simd` | — | `noyalib::simd::*` primitives + parser hot path | [Benchmarks](#benchmarks) |
 | `nightly-simd` | `simd` (nightly toolchain) | `core::simd`-backed `StructuralIter` (32-byte chunks) | [Benchmarks](#benchmarks) |
 | `compat-serde-yaml` | — | `noyalib::compat::serde_yaml` shim for migration | [When not to use noyalib](#when-not-to-use-noyalib) |
+| `lossless-u64` | — | `Number::Unsigned(u64)` plus opt-in parser/serializer config for scalars in `(i64::MAX, u64::MAX]` | [`doc/adr/0004-lossless-u64-integers.md`](doc/adr/0004-lossless-u64-integers.md), `examples/lossless_u64.rs`, `benches/lossless_u64.rs` |
 | `compare-saphyr` | `serde-saphyr` *(dev only)* | Cross-library bench comparison arms | `benches/comparison.rs` |
 | `noyavalidate` | `std` + `miette` + `validate-schema` | The `noyavalidate` CLI binary | [Tooling](#tooling) |
 
